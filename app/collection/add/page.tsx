@@ -13,6 +13,17 @@ type DiscogsResult = {
   cover_image?: string
 }
 
+type DiscogsReleaseDetails = DiscogsResult & {
+  barcode?: string[]
+  artists?: Array<{
+    id?: number
+    name?: string
+  }>
+  labels?: Array<{
+    id?: number
+    name?: string
+  }>}
+
 const conditions = [
   'M',
   'NM',
@@ -31,7 +42,11 @@ export default function AddRecordPage() {
   const [error, setError] = useState('')
   const [hasSearched, setHasSearched] = useState(false)
   const [selectedResult, setSelectedResult] =
-    useState<DiscogsResult | null>(null)
+  useState<DiscogsReleaseDetails | null>(null)
+
+const [detailsLoading, setDetailsLoading] = useState(false)
+const [saveError, setSaveError] = useState('')
+const [saving, setSaving] = useState(false)
 
   const [mediaCondition, setMediaCondition] = useState('')
   const [sleeveCondition, setSleeveCondition] = useState('')
@@ -82,8 +97,25 @@ export default function AddRecordPage() {
     }
   }
 
-  function handleSelectResult(result: DiscogsResult) {
-    setSelectedResult(result)
+  async function handleSelectResult(result: DiscogsResult) {
+  setSelectedResult(null)
+  setSaveError('')
+  setDetailsLoading(true)
+
+  try {
+    const response = await fetch(
+      `/api/discogs/release?id=${result.id}`
+    )
+
+    const details = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        details.error || 'Errore nel caricamento dei dettagli'
+      )
+    }
+
+    setSelectedResult(details as DiscogsReleaseDetails)
 
     setTimeout(() => {
       selectedSectionRef.current?.scrollIntoView({
@@ -91,20 +123,51 @@ export default function AddRecordPage() {
         block: 'start',
       })
     }, 50)
+  } catch (error) {
+    setSaveError(
+      error instanceof Error
+        ? error.message
+        : 'Errore nel caricamento dei dettagli'
+    )
+  } finally {
+    setDetailsLoading(false)
+  }
+}  async function handleSaveCopy(
+  event: FormEvent<HTMLFormElement>
+) {
+  event.preventDefault()
+
+  if (!selectedResult) {
+    alert('Seleziona prima un disco.')
+    return
   }
 
-  function handleSaveCopy(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  if (!mediaCondition || !sleeveCondition) {
+    alert(
+      'Inserisci la condizione del vinile e della copertina.'
+    )
+    return
+  }
 
-    if (!mediaCondition || !sleeveCondition) {
-      alert(
-        'Inserisci la condizione del vinile e della copertina.'
-      )
-      return
-    }
+  setSaving(true)
+  setSaveError('')
 
-    console.log({
-      release: selectedResult,
+  try {
+    const { saveCollectionItem } = await import(
+      '@/lib/actions/collection'
+    )
+
+    await saveCollectionItem({
+      discogsReleaseId: selectedResult.id,
+      title: selectedResult.title,
+      year: selectedResult.year,
+      country: selectedResult.country,
+      format: selectedResult.format,
+      catno: selectedResult.catno,
+      barcode: selectedResult.barcode,
+      coverUrl: selectedResult.cover_image,
+      artists: selectedResult.artists,
+      labels: selectedResult.labels,
       mediaCondition,
       sleeveCondition,
       purchasePrice,
@@ -112,13 +175,32 @@ export default function AddRecordPage() {
       purchaseSource,
       location,
       notes,
-      favorite,
+      isFavorite: favorite,
     })
 
-    alert(
-      'Dati della tua copia raccolti. Il salvataggio nel database sarà il prossimo passo.'
-    )
+    alert('Disco aggiunto alla tua collezione!')
+
+    setSelectedResult(null)
+    setMediaCondition('')
+    setSleeveCondition('')
+    setPurchasePrice('')
+    setPurchaseDate('')
+    setPurchaseSource('')
+    setLocation('')
+    setNotes('')
+    setFavorite(false)
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Errore durante il salvataggio'
+
+    setSaveError(message)
+    alert(message)
+  } finally {
+    setSaving(false)
   }
+}
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -235,7 +317,7 @@ export default function AddRecordPage() {
                     <button
                       type="button"
                       onClick={() => handleSelectResult(result)}
-                      className="mt-4 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+                      className="mt-4 cursor-pointer rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
                     >
                       Scegli questa edizione
                     </button>
@@ -281,6 +363,16 @@ export default function AddRecordPage() {
                 <h3 className="text-lg font-semibold">
                   {selectedResult.title}
                 </h3>
+{selectedResult.artists &&
+  selectedResult.artists.length > 0 && (
+    <p className="mt-1 text-sm text-gray-600">
+      Artista:{' '}
+      {selectedResult.artists
+        .map((artist) => artist.name)
+        .filter(Boolean)
+        .join(', ')}
+    </p>
+  )}
 
                 {selectedResult.year && (
                   <p className="mt-2 text-sm text-gray-600">
@@ -294,7 +386,16 @@ export default function AddRecordPage() {
                   </p>
                 )}
 
-                {selectedResult.label &&
+                {selectedResult.labels &&
+  selectedResult.labels.length > 0 && (
+    <p className="mt-1 text-sm text-gray-600">
+      Etichetta:{' '}
+      {selectedResult.labels
+        .map((label) => label.name)
+        .filter(Boolean)
+        .join(', ')}
+    </p>
+  )}{selectedResult.label &&
                   selectedResult.label.length > 0 && (
                     <p className="mt-1 text-sm text-gray-600">
                       Etichetta:{' '}
@@ -309,8 +410,7 @@ export default function AddRecordPage() {
                 )}
 
                 {selectedResult.format &&
-                  selectedResult.format.length > 0 && (
-                    <p className="mt-1 text-sm text-gray-600">
+                  selectedResult.format.length > 0 && (                    <p className="mt-1 text-sm text-gray-600">
                       Formato:{' '}
                       {selectedResult.format.join(', ')}
                     </p>
