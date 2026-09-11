@@ -1,12 +1,40 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const id = searchParams.get('id')
+type DiscogsRelease = {
+  id: number
+  title: string
+  year?: number
+  country?: string
+  formats?: Array<{
+    name?: string
+    descriptions?: string[]
+    text?: string
+  }>
+  labels?: Array<{
+    id?: number
+    name?: string
+    catno?: string
+  }>
+  identifiers?: Array<{
+    type?: string
+    value?: string
+  }>
+  images?: Array<{
+    uri?: string
+    uri150?: string
+  }>
+  artists?: Array<{
+    id?: number
+    name?: string
+  }>
+}
 
-  if (!id) {
+export async function GET(request: NextRequest) {
+  const releaseId = request.nextUrl.searchParams.get('id')?.trim()
+
+  if (!releaseId || !Number.isFinite(Number(releaseId))) {
     return NextResponse.json(
-      { error: 'ID release mancante' },
+      { error: 'Parametro id mancante o non valido' },
       { status: 400 }
     )
   }
@@ -15,14 +43,14 @@ export async function GET(request: Request) {
 
   if (!token) {
     return NextResponse.json(
-      { error: 'Token Discogs mancante' },
+      { error: 'DISCOGS_API_TOKEN non configurato' },
       { status: 500 }
     )
   }
 
   try {
     const response = await fetch(
-      `https://api.discogs.com/releases/${encodeURIComponent(id)}`,
+      `https://api.discogs.com/releases/${encodeURIComponent(releaseId)}`,
       {
         headers: {
           Authorization: `Discogs token=${token}`,
@@ -32,67 +60,53 @@ export async function GET(request: Request) {
       }
     )
 
-    const data = await response.json()
-
     if (!response.ok) {
+      const errorData = await response.json().catch(() => null)
+
       return NextResponse.json(
         {
           error:
-            data?.message ||
+            errorData?.message ||
             'Errore nel recupero dei dettagli Discogs',
         },
         { status: response.status }
       )
     }
 
+    const data: DiscogsRelease = await response.json()
+
     return NextResponse.json({
       id: data.id,
       title: data.title,
       year: data.year,
       country: data.country,
-
       format: Array.isArray(data.formats)
-        ? data.formats.flatMap(
-            (item: {
-              name?: string
-              descriptions?: string[]
-              text?: string
-            }) => [
-              ...(item.name ? [item.name] : []),
-              ...(item.descriptions ?? []),
-              ...(item.text ? [item.text] : []),
-            ]
-          )
+        ? data.formats.flatMap((item) => [
+            ...(item.name ? [item.name] : []),
+            ...(item.descriptions ?? []),
+            ...(item.text ? [item.text] : []),
+          ])
         : [],
-
       catno: Array.isArray(data.labels)
         ? data.labels
-            .map((label: { catno?: string }) => label.catno)
+            .map((label) => label.catno)
             .filter(Boolean)
             .join(' / ')
         : '',
-
       barcode: Array.isArray(data.identifiers)
         ? data.identifiers
-            .filter(
-              (item: {
-                type?: string
-                value?: string
-              }) =>
-                item.type === 'Barcode' && item.value
-            )
-            .map(
-              (item: { value?: string }) => item.value
-            )
+            .filter((item) => item.type === 'Barcode' && item.value)
+            .map((item) => item.value as string)
         : [],
-
-      cover_image:
-        data.images?.[0]?.uri ||
-        data.images?.[0]?.uri150 ||
-        null,
-
-      artists: data.artists,
-      labels: data.labels,
+      cover_image: data.images?.[0]?.uri || data.images?.[0]?.uri150 || null,
+      artists: (data.artists ?? []).map((artist) => ({
+        id: artist.id,
+        name: artist.name,
+      })),
+      labels: (data.labels ?? []).map((label) => ({
+        id: label.id,
+        name: label.name,
+      })),
     })
   } catch (error) {
     console.error('Discogs release error:', error)
